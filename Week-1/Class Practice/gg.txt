@@ -1,0 +1,202 @@
+#include "CytronMotorDriver.h"
+
+// Defining digital inputs of the sensor
+#define SENSOR_PIN_0 1
+#define SENSOR_PIN_7 2
+
+const byte analogPin = 0;   // Connect AN output of LSA08 to analog pin 0
+const byte junctionPulse = 4;   // Connect JPULSE of LSA08 to pin 4
+
+// Configure the motor driver.
+CytronMD motor_FLeft(PWM_DIR, 6, 7);  // PWM 1 = Pin 6, DIR 1 = Pin 7.  motor 1
+CytronMD motor_FRight(PWM_DIR, 9, 8);  // PWM 2 = Pin 9, DIR 2 = Pin 8. motor 2
+CytronMD motor_BLeft(PWM_DIR, 10, 12);  // PWM 3 = Pin 10, DIR 3 = Pin 12. motor 3
+CytronMD motor_BRight(PWM_DIR, 11, 13);  // PWM 4 = Pin 11, DIR 4 = Pin 13. motor 4
+
+int readVal,positionVal;    // Variables to store analog and line position value
+unsigned int junctionCount = 0;   // Variable to store junction count value
+
+//setting PID and Speed Constant
+int MAX_SPEED= 150;
+//PID Constants to be set by trial and error while testing
+float Kp = 6.0;
+float Kd = 0.0;
+float Ki = 0.0;
+
+long prevT = 0;
+float prev_err = 0;
+float eintegral = 0;
+
+// For Rotations:
+bool lineDetected = false;
+bool rotatingLeft = false;
+bool rotatingRight = false;
+
+void setup() 
+{
+  pinMode(SENSOR_PIN_0,INPUT); //Assigning digital input pin at pin 1 => 0th sensor
+  pinMode(SENSOR_PIN_7,INPUT); //Assigning digital input pin at pin 2 => 7th sensor
+
+  pinMode(junctionPulse,INPUT);
+  Serial.begin(115200);
+
+}
+
+void loop() 
+{
+  int sensorValue0 = digitalRead(SENSOR_PIN_0);
+  int sensorValue7 = digitalRead(SENSOR_PIN_7);
+
+  if (!rotatingLeft && !rotatingRight) {
+    if (sensorValue0 == HIGH && !lineDetected) {
+      // Start rotating anti-clockwise
+      rotateLeft(); 
+      rotatingLeft = true;
+    } else if (sensorValue7 == HIGH && !lineDetected) {
+      // Start rotating clockwise
+      rotateRight(); 
+      rotatingRight = true;
+    } else if (sensorValue0 == LOW && sensorValue7 == LOW && !lineDetected) {
+      // Move forward when neither sensor detects the line
+      moveForward(); 
+    }
+  } else {
+    if (rotatingLeft && sensorValue0 == HIGH) {
+      // Stop rotating left when sensor detects the line
+      stopRotation(); 
+      rotatingLeft = false;
+      lineDetected = true;
+    } else if (rotatingRight && sensorValue7 == LOW) {
+      // Stop rotating right when sensor detects the line
+      stopRotation(); 
+      rotatingRight = false;
+      lineDetected = true;
+    }
+  }
+
+  if (lineDetected && !rotatingLeft && !rotatingRight) {
+    // Move forward after completing the turn
+    moveForward(); // Function to move the bot forward
+    // Reset line detection flag for the next turn
+    lineDetected = false;
+  }
+
+  delay(500);
+}
+
+void rotateLeft() {
+  // Code to rotate the bot anti-clockwise
+  // Taking experimental values of speed for now
+  motor_FLeft.setSpeed(-120);  //Motor 1
+  motor_FRight.setSpeed(120); //Motor 2
+  motor_BLeft.setSpeed(120);  //Motor 3 
+  motor_BRight.setSpeed(-120); //Motor 4
+}
+
+void rotateRight() {
+  // Code to rotate the bot clockwise
+  // Taking experimental values of speed for now
+  motor_FLeft.setSpeed(120);  //Motor 1
+  motor_FRight.setSpeed(-120); //Motor 2
+  motor_BLeft.setSpeed(-120);  //Motor 3
+  motor_BRight.setSpeed(120); //Motor 4
+}
+
+void stopRotation() {
+  // Implement code to stop the bot's rotation
+  //Stopping the motors
+    motor_FLeft.setSpeed(0);  //Motor 1
+    motor_FRight.setSpeed(0); //Motor 2
+    motor_BLeft.setSpeed(0);  //Motor 3
+    motor_BRight.setSpeed(0); //Motor 4
+}
+
+void moveForward() {
+  // Implement code to make the bot move forward
+  // Read value from analog pin
+    readVal = analogRead(analogPin);
+    Serial.print("readVal: ");
+    Serial.println(readVal);
+
+
+    // Convert voltage level into line position value
+    positionVal = ((float)readVal/921)*70;
+    Serial.print("positionVal: ");
+    Serial.println(positionVal);
+
+    long currT = micros(); //get the current time
+    float deltaT = ((float) (currT - prevT))/( 1.0e6 );
+    prevT = currT;
+
+    int set_pos= 35;
+    int err = positionVal - set_pos; // propotional
+    float dert = (err-prev_err)/(deltaT); //derivative
+    float eintegral = eintegral + err*deltaT; // integral
+    prev_err = err;
+
+    //PID-Controller applied on Model
+    int w = (int) (Kp*err + Kd*dert + Ki*eintegral);
+
+    //Converting to Differential Drive
+    int w_l = MAX_SPEED + w;
+    int w_r = MAX_SPEED - w;
+
+    // //Caping the speeds
+    //left
+    if (w_l > 255)
+    {
+      w_l = 255;
+    }
+    if (w_l < -255)
+    {
+      w_l = -255;
+    }
+    //right
+    if (w_l > 255)
+    {
+      w_l = 255;
+    }
+    if (w_r < -255)
+    {
+      w_r = -255;
+    }
+
+    //Print the direction with the speed
+    if (w_l > w_r)
+    {
+      // for right : 2 and 3 - slow(when w is positive), 1 and 4 fast(when w is positive)
+      Serial.println("Moving Right");
+    }
+    else if (w_r > w_l)
+    {
+      // for left : 1 and 4 - slow(when w is negative), 2 and 3 - fast(when w is negative)
+      Serial.println("Moving Left");
+    }
+    else if ((w_r == w_l) && (w_r != 0))
+    {
+      // 1 and 4 - clockwise (forward) and 2 and 3 - anticlockwise (backward)
+      Serial.println("Moving Forward");
+    }
+    else
+    {
+      Serial.println("Waiting");
+    }
+    Serial.print("Left Speed: ");
+    Serial.println(w_l);
+    Serial.print("Right Speed:");
+    Serial.println(w_r);
+
+    //Printing the junction count
+    Serial.print("Junction Count: ");
+    Serial.println(junctionCount);
+
+    // for moving the robot
+    // 1,4 => w_l and 2,3 => w_r 
+
+    //Running the motors
+    motor_FLeft.setSpeed(w_l);  //Motor 1
+    motor_FRight.setSpeed(w_r); //Motor 2
+    motor_BLeft.setSpeed(w_r);  //Motor 3
+    motor_BRight.setSpeed(w_l); //Motor 4
+
+}
