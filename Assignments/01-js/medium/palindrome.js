@@ -4,6 +4,17 @@
 */
 
 function isPalindrome(str) {
+  str = str.toLowerCase().split("").filter((current)=>((current>="a"&&current<="z")||(current>=0&&current<=9))&& current!==" ").join("");
+
+  let start = 0;
+  let end = str.length - 1;
+
+  while(start < end){
+    if(str[start]!==str[end]) return false;
+    start++;
+    end--;
+  }
+
   return true;
 }
 
